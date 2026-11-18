@@ -11,14 +11,15 @@ UserService, PaymentService, ProvisioningService, ProvisionFunction and Wordpres
 
 ```
 local/                      development on your machine
-  docker-compose.yml        Postgres, MySQL, NATS, Azurite, ... and (profile "apps") the services
+  docker-compose.yml        Postgres, MySQL, NATS, Azurite, Keycloak ... and (profile "apps") the services
+  keycloak/rso-realm.json   the Keycloak realm (sign-up on, the web app's client, the API audience), imported on first start
   gateway/nginx.conf        the API gateway of the compose setup
   run-local.ps1             compose + every service with `dotnet run`
   send-stripe-event.py      sends a signed fake Stripe webhook to PaymentService
 nonLocal/                   Azure
   terraform/                everything on Azure: AKS, PostgreSQL, MySQL, storage queues, the Function App, monitoring,
                             Traefik, NATS, and optionally Argo CD (README.md in that folder has the full steps)
-  helm/rso/                 the platform chart (gateway, frontend, UserService, PaymentService, ProvisioningService)
+  helm/rso/                 the platform chart (gateway, frontend, UserService, PaymentService, ProvisioningService, Keycloak)
   helm/argocd-config/       a small chart Terraform installs: the Argo CD Application + the Image Updater resource
   publish-function.ps1      builds ProvisionFunction and deploys it to the Function App
 ```
@@ -35,6 +36,95 @@ The scripts expect the service repositories next to this one:
 powershell -ExecutionPolicy Bypass -File local/run-local.ps1      # infrastructure + services
 docker compose -f local/docker-compose.yml down                  # stop the infrastructure
 ```
+
+Sign-up and log-in are Keycloak's: open the web app (`npm start` in WordpressAsAServiceUi, http://localhost:4200), click
+**Create account**, and Keycloak's page (http://localhost:8180) takes the details. Keycloak's admin console is on
+http://localhost:8180 (user `admin`, password `admin`; local only).
+
+## Identity: Keycloak and how it ties together
+
+**Keycloak owns the accounts** (sign-up, log-in, passwords, lockout, tokens). **UserService owns the profile** (name, company,
+tenant) and the GraphQL API. The two are linked by one id: the user's Keycloak id, which is the `sub` of every token and the
+user id in every service.
+
+```mermaid
+sequenceDiagram
+    actor U as User (browser)
+    participant W as Web app
+    participant K as Keycloak
+    participant US as UserService (GraphQL)
+    participant N as NATS
+    participant P as PaymentService
+    U->>W: open the app, click Create account / Sign in
+    W->>K: redirect to Keycloak's page
+    U->>K: email, name, password (sign-up) or credentials (log-in)
+    K-->>W: redirect back with a code; the app exchanges it for tokens
+    W->>US: GraphQL me (Authorization: Bearer access token)
+    US->>K: (once, cached) signing keys from the discovery document
+    Note over US: token valid: signature, issuer, audience rso-api
+    alt first time this user (sub) is seen
+        US->>US: create the profile (id, email, first and last name from the token)
+        US->>N: UserCreated (outbox, same transaction)
+        N->>P: UserCreated: create the Stripe customer
+    end
+    US-->>W: the profile
+    W->>US: patchMe (name, company): tenant slug assigned, TenantAssigned published
+    W->>P: REST with the same token (PaymentService validates it itself)
+```
+
+### The new-user event
+
+Before, UserService did the sign-up, so it published `UserCreated` right then. Now Keycloak does the sign-up and tells
+nobody, so UserService first hears of a user **when that user's token arrives**: the first `me` (or `patchMe`) call creates the
+profile and publishes `UserCreated`, in one transaction (the outbox), exactly once. The web app asks for the profile right
+after the redirect back from Keycloak, so in practice this is the same moment as before.
+
+What this means:
+
+- **`UserCreated` is lazy.** A user who registers in Keycloak but never reaches the app has no profile and no Stripe customer.
+  PaymentService creates a missing Stripe customer on demand anyway (when a card is added or a site is bought), so nothing
+  breaks.
+- **Name prefill.** Keycloak's sign-up form asks for first and last name; the profile is created with them, so the app's welcome
+  page only needs the company before the tenant slug is assigned.
+- **Two requests at once** (the app asks twice): one creates the profile, the other finds it (the unique key on the id decides;
+  no duplicate event).
+- **Changes in Keycloak.** A changed email is copied to the profile on the next request. A user **deleted in Keycloak keeps
+  their profile and sites** (Keycloak sends no event); remove them yourself if that matters.
+- **Everything after that is as before:** tenant slug, `TenantAssigned`, the provisioning flow.
+- If you ever need the event at sign-up time (not at first use), the options are a Keycloak event listener that calls
+  UserService, or a periodic sync through Keycloak's admin API. Neither is needed for this setup.
+
+### Who validates what
+
+| | |
+|---|---|
+| Browser -> Keycloak | the sign-in and sign-up pages, token refresh (the web app, `keycloak-js`, authorization code flow) |
+| UserService, PaymentService, ProvisioningService | validate the access token themselves: signature (keys from Keycloak's discovery document, read inside the cluster), issuer (`iss`, the public address of the realm), audience (`rso-api`, added by a mapper of the realm's client) |
+| Keycloak -> database | its own `KeycloakDb` on the same PostgreSQL server (small connection pool: the server allows few connections) |
+| UserService -> database | the profile table only (id, email, name, company, tenant); no passwords any more |
+
+### Keycloak on Azure
+
+Terraform creates `KeycloakDb`, the admin password and a Secret; the chart deploys Keycloak and an Ingress at
+`http://keycloak.<base domain>`; `terraform output keycloak` shows the address and how to get the admin password.
+
+- **Plain http.** Everything is plain http (sslip.io), so the realm has "require SSL" off and the web app skips PKCE, which
+  browsers only allow on https or localhost. Fine for testing; with a real domain and https, set `keycloak.sslRequired` and
+  `auth.issuer` in the chart and re-enable PKCE (the app does it by itself on https).
+- **The realm is imported once**, on Keycloak's first start, with the web app's address of that moment. A new public IP (a
+  fresh `terraform apply`) means a new database and a new import, so that is fine; to change it later use the admin console.
+- **The admin console needs one command.** Keycloak's built-in `master` realm (where the admin console lives) requires https
+  for non-local addresses, and our realm's "SSL required: none" does not cover it. Over plain http, switch it off once, from
+  inside the pod (a local address), then sign in at `http://keycloak.<base domain>/admin`:
+
+  ```powershell
+  kubectl -n rso exec deploy/rso-keycloak -- sh -c '/opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" && /opt/keycloak/bin/kcadm.sh update realms/master -s sslRequired=NONE'
+  ```
+
+  (Not tried against a live cluster. The sign-in and sign-up pages of the app do not need this.)
+- **Memory.** Keycloak is a Java application and takes roughly 0.7 to 1.5 GB on the single node.
+- **Passwords.** The realm requires 8+ characters and locks an account after 5 failed attempts. "Forgot password" and email
+  verification are off: they need an email server (SMTP) configured in the realm.
 
 ## Azure
 

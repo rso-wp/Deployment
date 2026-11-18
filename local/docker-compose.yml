@@ -1,4 +1,4 @@
-# Local development: the infrastructure (Postgres, MySQL, NATS, Azurite, ...) and, with the "apps" profile, the services.
+# Local development: the infrastructure (Postgres, MySQL, NATS, Azurite, Keycloak, ...) and, with the "apps" profile, the services.
 #
 #   Infrastructure only (run the services from your IDE / dotnet run):
 #     docker compose -f local/docker-compose.yml up -d
@@ -90,10 +90,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # Sign-up, log-in and passwords: Keycloak (the realm "rso" is imported from keycloak/rso-realm.json). Admin console:
+  # http://localhost:8180 (admin / admin). Users you create live in its own storage (volume keycloak_data).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    container_name: rso-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # The address the browser uses: the `iss` of every token. Services reach it as keycloak:8080 (backchannel).
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports:
+      - "8180:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+      - ./keycloak/rso-realm.json:/opt/keycloak/data/import/rso-realm.json:ro
+
   # ---------------------------------------------------------------- services (profile "apps")
   # Same host ports as `dotnet run`, so URLs do not change between the two ways of running.
-  # ASPNETCORE_ENVIRONMENT=Development: migrations run on start. UserService generates its token signing key on start
-  # (the container cannot keep it, so restarting user-service signs everyone out).
+  # ASPNETCORE_ENVIRONMENT=Development: migrations run on start. The services trust the tokens Keycloak issues.
   user-service:
     profiles: [apps]
     build:
@@ -105,11 +122,15 @@ services:
       ASPNETCORE_HTTP_PORTS: "8080"
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=UserServiceDb;Username=rso;Password=rso
       Nats__Url: nats://nats:4222
+      Auth__Issuer: http://localhost:8180/realms/rso
+      Auth__Audience: rso-api
+      Auth__MetadataAddress: http://keycloak:8080/realms/rso/.well-known/openid-configuration
     ports:
       - "5076:8080"
     depends_on:
       postgres: { condition: service_healthy }
       nats: { condition: service_healthy }
+      keycloak: { condition: service_started }
 
   payment-service:
     profiles: [apps]
@@ -121,7 +142,9 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=PaymentServiceDb;Username=rso;Password=rso
       Nats__Url: nats://nats:4222
-      Auth__MetadataAddress: http://user-service:8080/.well-known/openid-configuration
+      Auth__Issuer: http://localhost:8180/realms/rso
+      Auth__Audience: rso-api
+      Auth__MetadataAddress: http://keycloak:8080/realms/rso/.well-known/openid-configuration
       Stripe__UseFake: "true"   # set to "false" and provide real test keys to call Stripe
     ports:
       - "5263:5263"   # gRPC (only so `dotnet run` services can reach it; the gateway never routes it)
@@ -141,7 +164,10 @@ services:
       ASPNETCORE_HTTP_PORTS: "8080"
       ConnectionStrings__DefaultConnection: Host=postgres-provisioning;Port=5432;Database=ProvisioningServiceDb;Username=rso;Password=rso
       Nats__Url: nats://nats:4222
-      Auth__MetadataAddress: http://user-service:8080/.well-known/openid-configuration
+      Auth__Issuer: http://localhost:8180/realms/rso
+      Auth__Audience: rso-api
+      Auth__MetadataAddress: http://keycloak:8080/realms/rso/.well-known/openid-configuration
+      UserService__Url: http://user-service:8080
       PaymentService__GrpcUrl: http://payment-service:5263
       ProvisioningQueues: *azurite
     ports:
@@ -191,6 +217,7 @@ networks:
     name: rso   # fixed name: ProvisionFunction attaches the WordPress containers to it
 
 volumes:
+  keycloak_data:
   azurite_data:
   postgres_data:
   postgres_provisioning_data:

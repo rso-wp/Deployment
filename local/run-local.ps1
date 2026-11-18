@@ -27,4 +27,4 @@ if (Get-Command func -ErrorAction SilentlyContinue) {
     Write-Warning 'Azure Functions Core Tools (func) not found: start ProvisionFunction from Visual Studio, or install them (npm i -g azure-functions-core-tools@4).'
 }
 
-Write-Host 'Started. UserService :5076, PaymentService :5263/:5264, ProvisioningService :5151 (sign up at http://localhost:4200 or with POST /auth/signup).'
+Write-Host 'Started. UserService :5076, PaymentService :5263/:5264, ProvisioningService :5151 (sign up at http://localhost:4200, which sends you to Keycloak on http://localhost:8180).'

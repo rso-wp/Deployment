@@ -1,0 +1,205 @@
+{{- if .Values.keycloak.enabled }}
+{{- $name := "keycloak" -}}
+{{- $full := include "rso.name" (dict "root" . "name" $name) -}}
+{{- $ctx := dict "root" . "name" $name -}}
+{{- $k := .Values.keycloak -}}
+{{- $host := required "keycloak.hostname is required" $k.hostname -}}
+{{- $dbSecret := required "keycloak.database.existingSecret is required" $k.database.existingSecret -}}
+{{- $adminSecret := required "keycloak.admin.existingSecret is required" $k.admin.existingSecret -}}
+{{- $realm := fromYaml (include "rso.keycloakRealm" .) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-realm
+  labels:
+    {{- include "rso.labels" $ctx | nindent 4 }}
+data:
+  rso-realm.json: |
+    {{- toPrettyJson $realm | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "rso.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  # One instance on one database: replace it, do not run two side by side while it is updated.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "rso.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rso.selectorLabels" $ctx | nindent 8 }}
+    spec:
+      {{- include "rso.pullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000   # the user of the Keycloak image
+      containers:
+        - name: keycloak
+          image: {{ $k.image.repository }}:{{ $k.image.tag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          # start (not start-dev): production mode. It builds on start, which takes a minute.
+          args: ["start", "--import-realm"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              valueFrom: { secretKeyRef: { name: {{ $dbSecret }}, key: KC_DB_URL } }
+            - name: KC_DB_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ $dbSecret }}, key: KC_DB_USERNAME } }
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $dbSecret }}, key: KC_DB_PASSWORD } }
+            # Few connections: the PostgreSQL server is shared with the services.
+            - name: KC_DB_POOL_INITIAL_SIZE
+              value: "1"
+            - name: KC_DB_POOL_MIN_SIZE
+              value: "1"
+            - name: KC_DB_POOL_MAX_SIZE
+              value: {{ $k.dbPoolMaxSize | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom: { secretKeyRef: { name: {{ $adminSecret }}, key: KC_BOOTSTRAP_ADMIN_USERNAME } }
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $adminSecret }}, key: KC_BOOTSTRAP_ADMIN_PASSWORD } }
+            # Behind Traefik, plain http. KC_HOSTNAME is the address the browser uses (the `iss` of every token); the services
+            # fetch the keys from the cluster-internal address (backchannel).
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HOSTNAME
+              value: {{ include "rso.authIssuer" . | trimSuffix (printf "/realms/%s" $k.realm) | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            periodSeconds: 5
+            failureThreshold: 60   # up to 5 minutes: it builds, then imports the realm
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $k.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ $full }}-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "rso.labels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rso.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if $k.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "rso.labels" $ctx | nindent 4 }}
+  {{- with $k.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $k.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $full }}
+                port:
+                  name: http
+{{- end }}
+{{- end }}
+
+{{- define "rso.keycloakRealm" -}}
+{{- $k := .Values.keycloak -}}
+{{- $app := required "keycloak.appUrl is required" $k.appUrl | trimSuffix "/" -}}
+realm: {{ $k.realm }}
+displayName: PressHost
+enabled: true
+sslRequired: {{ $k.sslRequired }}
+# Sign-up on the login page, with the email as the user name.
+registrationAllowed: true
+registrationEmailAsUsername: true
+loginWithEmailAllowed: true
+duplicateEmailsAllowed: false
+editUsernameAllowed: false
+resetPasswordAllowed: false   # needs an email server (SMTP) set up in the realm
+verifyEmail: false
+rememberMe: true
+bruteForceProtected: true
+failureFactor: 5
+passwordPolicy: length(8)
+accessTokenLifespan: 300
+clients:
+  - clientId: rso-frontend
+    name: PressHost web app
+    enabled: true
+    protocol: openid-connect
+    publicClient: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    redirectUris:
+      - {{ printf "%s/*" $app | quote }}
+    webOrigins:
+      - {{ $app | quote }}
+    attributes:
+      post.logout.redirect.uris: "+"
+    protocolMappers:
+      # Puts the API's audience in the access token; the services reject tokens without it.
+      - name: audience-rso-api
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        consentRequired: false
+        config:
+          included.custom.audience: {{ $.Values.auth.audience | quote }}
+          access.token.claim: "true"
+          id.token.claim: "false"
+          introspection.token.claim: "true"
+{{- end -}}

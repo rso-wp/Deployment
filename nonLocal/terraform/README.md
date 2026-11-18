@@ -14,7 +14,7 @@ See also the [repository README](../../README.md) (layout, local setup, Argo CD)
 | Function App (Flex Consumption) | ProvisionFunction. Its managed identity can use the queues and the AKS `tenants` namespace |
 | Azure Monitor workspace + Azure Managed Grafana (only with `enable_monitoring = true`) | managed Prometheus scrapes the services' `/metrics`; `grafana_url` is the Grafana (Entra ID sign-in). Grafana Standard is billed per instance and active user |
 
-All secrets (database passwords, the token signing key, the Stripe keys) are generated or read from variables and stored as
+All secrets (database passwords, the Keycloak admin password, the Stripe keys) are generated or read from variables and stored as
 Kubernetes Secrets, never in helm values. **They are also in the terraform state**, so keep `terraform.tfstate` private.
 
 Terraform creates the Function App but doesn't deploy its code: **step 6 is needed before sites can be created.** Until
@@ -155,7 +155,8 @@ az aks stop -g rso-rg -n (terraform output -raw aks_name)
 | The app URL doesn't respond | `kubectl get svc -n traefik`: EXTERNAL-IP should be the `base_domain` IP. `kubectl get ingress -n rso` |
 | A site stays `Queued` | The function code isn't published (step 6), or it can't start: Function App → Log stream |
 | A site becomes `Failed` | The function's log has the reason. `not scheduled ... node(s) exceed max volume count` means the node's disk limit (see the top); `ImagePullBackOff` means Docker Hub rate limits or no network |
-| Every API call returns 401 after signing in | PaymentService and ProvisioningService get the signing key from UserService. Is `rso-user-service` running? |
+| Every API call returns 401 after signing in | The services get the token signing keys from Keycloak (`Auth__MetadataAddress`) and check the token's issuer and audience. Is `rso-keycloak` Running, and does `kubectl -n rso get deploy rso-user-service -o yaml` show `Auth__Issuer` = `http://keycloak.<base domain>/realms/rso`? Does the token have `aud: rso-api` (the realm's audience mapper)? |
+| Sign-in redirects fail or Keycloak shows "Invalid redirect URI" | The realm is imported once, with the app address of that moment (`keycloak.appUrl`). After a new public IP, change the client's redirect URI in the admin console (`terraform output keycloak`) or delete `KeycloakDb` so the realm is imported again |
 
 ## Keeping costs low
 

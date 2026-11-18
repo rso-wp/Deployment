@@ -31,15 +31,13 @@ stringData:
 - name: Database__MigrateOnStartup
   value: {{ .root.Values.global.migrateOnStartup | quote }}
 - name: Auth__Issuer
-  value: {{ .root.Values.auth.issuer | quote }}
+  value: {{ include "rso.authIssuer" .root | quote }}
 - name: Auth__Audience
   value: {{ .root.Values.auth.audience | quote }}
 - name: Auth__MetadataAddress
-  value: {{ include "rso.userServiceMetadata" .root | quote }}
-{{- with .root.Values.auth.signingPublicKey }}
-- name: Auth__SigningPublicKey
-  value: {{ . | toJson }}
-{{- end }}
+  value: {{ include "rso.keycloakMetadata" .root | quote }}
+- name: UserService__Url
+  value: {{ printf "http://%s:%v" (include "rso.name" (dict "root" .root "name" "user-service")) .root.Values.userService.port | quote }}
 - name: Provisioning__StripePriceId
   value: {{ required "provisioningService.stripePriceId is required" $cfg.stripePriceId | quote }}
 - name: Provisioning__BaseDomain

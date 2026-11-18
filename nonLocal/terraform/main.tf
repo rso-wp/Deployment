@@ -37,8 +37,11 @@ locals {
   # http://<ip-with-dashes>.sslip.io serves the app; sites are <site>.<tenant>.<that name>.
   base_domain = "${replace(azurerm_public_ip.ingress.ip_address, ".", "-")}.sslip.io"
 
-  databases = ["UserServiceDb", "PaymentServiceDb", "ProvisioningServiceDb"]
-  queues    = ["provision-site", "deprovision-site", "provisioning-events", "provisioning-events-poison"]
+  databases = ["UserServiceDb", "PaymentServiceDb", "ProvisioningServiceDb", "KeycloakDb"]
+
+  # Keycloak (sign-up, log-in, tokens) is served next to the app: http://keycloak.<base domain>. The web app finds it there.
+  keycloak_host = "keycloak.${local.base_domain}"
+  queues        = ["provision-site", "deprovision-site", "provisioning-events", "provisioning-events-poison"]
 
   pg_host    = azurerm_postgresql_flexible_server.pg.fqdn
   mysql_host = azurerm_mysql_flexible_server.mysql.fqdn
@@ -387,10 +390,10 @@ resource "helm_release" "traefik" {
   })]
 }
 
-# Token signing key of UserService (only in the terraform state and the Secret below).
-resource "tls_private_key" "signing" {
-  algorithm = "RSA"
-  rsa_bits  = 2048
+# First admin of Keycloak (master realm). Not in any file: terraform output -raw keycloak_admin_password.
+resource "random_password" "keycloak_admin" {
+  length  = 24
+  special = false
 }
 
 locals {
@@ -407,7 +410,21 @@ resource "kubernetes_secret_v1" "user_service" {
   }
   data = {
     ConnectionStrings__DefaultConnection = local.pg["UserServiceDb"]
-    Auth__SigningKey                     = tls_private_key.signing.private_key_pem
+  }
+}
+
+# Keycloak's own database (KeycloakDb on the same PostgreSQL server) and its first admin.
+resource "kubernetes_secret_v1" "keycloak" {
+  metadata {
+    name      = "keycloak-secrets"
+    namespace = kubernetes_namespace_v1.ns["rso"].metadata[0].name
+  }
+  data = {
+    KC_DB_URL                   = "jdbc:postgresql://${local.pg_host}:5432/KeycloakDb?sslmode=require"
+    KC_DB_USERNAME              = "rsoadmin"
+    KC_DB_PASSWORD              = random_password.postgres.result
+    KC_BOOTSTRAP_ADMIN_USERNAME = "admin"
+    KC_BOOTSTRAP_ADMIN_PASSWORD = random_password.keycloak_admin.result
   }
 }
 
@@ -443,7 +460,14 @@ locals {
       logging          = { existingSecret = var.enable_logging ? kubernetes_secret_v1.logging[0].metadata[0].name : "" }
     }
     nats = { url = "nats://nats.messaging:4222" }
-    auth = { signingPublicKey = tls_private_key.signing.public_key_pem }
+    # Keycloak issues the tokens; the chart derives the issuer (http://<keycloak.hostname>/realms/rso) from its hostname.
+    keycloak = {
+      hostname = local.keycloak_host
+      appUrl   = "http://${local.base_domain}"
+      ingress  = { className = "traefik" }
+      database = { existingSecret = kubernetes_secret_v1.keycloak.metadata[0].name }
+      admin    = { existingSecret = kubernetes_secret_v1.keycloak.metadata[0].name }
+    }
     gateway = {
       replicas = 1
       ingress  = { enabled = true, className = "traefik", host = local.base_domain }

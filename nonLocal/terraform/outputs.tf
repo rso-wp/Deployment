@@ -55,3 +55,18 @@ output "logs" {
     "AppTraces | where AppRoleName == \"user-service\" | order by TimeGenerated desc",
   ]) : "Central logging is off (enable_logging = false)."
 }
+
+output "keycloak" {
+  description = "Keycloak: sign-up and log-in of the app. Admin console: sign in as admin (master realm)."
+  value = join("\n", [
+    "login pages: http://${local.keycloak_host}/realms/rso/account",
+    "admin console: http://${local.keycloak_host}/admin   user: admin   (over plain http first run the one-time command in the repository README, 'The admin console needs one command')",
+    "admin password: terraform output -raw keycloak_admin_password",
+  ])
+}
+
+output "keycloak_admin_password" {
+  description = "Password of the first Keycloak admin (user admin)."
+  value       = random_password.keycloak_admin.result
+  sensitive   = true
+}

@@ -2,8 +2,7 @@
 {{- $name := "user-service" -}}
 {{- $full := include "rso.name" (dict "root" . "name" $name) -}}
 {{- $ownDb := not $cfg.database.existingSecret -}}
-{{- $ownKey := not $cfg.auth.existingSecret -}}
-{{- if or $ownDb $ownKey }}
+{{- if $ownDb }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -14,9 +13,6 @@ type: Opaque
 stringData:
   {{- if $ownDb }}
   ConnectionStrings__DefaultConnection: {{ required "userService.database.connectionString is required" $cfg.database.connectionString | quote }}
-  {{- end }}
-  {{- if $ownKey }}
-  Auth__SigningKey: {{ required "userService.auth.signingKey is required" $cfg.auth.signingKey | quote }}
   {{- end }}
 ---
 {{- end }}
@@ -30,16 +26,11 @@ stringData:
 - name: Database__MigrateOnStartup
   value: {{ .root.Values.global.migrateOnStartup | quote }}
 - name: Auth__Issuer
-  value: {{ .root.Values.auth.issuer | quote }}
+  value: {{ include "rso.authIssuer" .root | quote }}
 - name: Auth__Audience
   value: {{ .root.Values.auth.audience | quote }}
-- name: Auth__TokenLifetime
-  value: {{ $cfg.auth.tokenLifetime | quote }}
-- name: Auth__SigningKey
-  valueFrom:
-    secretKeyRef:
-      name: {{ default .full $cfg.auth.existingSecret }}
-      key: Auth__SigningKey
+- name: Auth__MetadataAddress
+  value: {{ include "rso.keycloakMetadata" .root | quote }}
 - name: Nats__Url
   value: {{ required "nats.url is required" .root.Values.nats.url | quote }}
 - name: ConnectionStrings__DefaultConnection

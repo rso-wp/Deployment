@@ -139,8 +139,19 @@ spec:
 {{- end -}}
 
 {{/*
-UserService's OpenID discovery document (cluster-internal): where the other services get the token signing key.
+Keycloak's OpenID discovery document (cluster-internal): where the services get the token signing keys.
 */}}
-{{- define "rso.userServiceMetadata" -}}
-{{- printf "http://%s:%v/.well-known/openid-configuration" (include "rso.name" (dict "root" . "name" "user-service")) .Values.userService.port -}}
+{{- define "rso.keycloakMetadata" -}}
+{{- printf "http://%s:8080/realms/%s/.well-known/openid-configuration" (include "rso.name" (dict "root" . "name" "keycloak")) .Values.keycloak.realm -}}
+{{- end -}}
+
+{{/*
+The token issuer (`iss`): the realm URL as the browser sees it.
+*/}}
+{{- define "rso.authIssuer" -}}
+{{- if .Values.auth.issuer -}}
+{{- .Values.auth.issuer -}}
+{{- else -}}
+{{- printf "http://%s/realms/%s" (required "keycloak.hostname is required (or set auth.issuer)" .Values.keycloak.hostname) .Values.keycloak.realm -}}
+{{- end -}}
 {{- end -}}

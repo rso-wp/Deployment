@@ -22,14 +22,42 @@ global:
 nats:
   url: ""                  # e.g. nats://nats.messaging:4222
 
-# Access tokens: UserService signs them (userService.auth.signingKey); PaymentService and ProvisioningService validate
-# them with its public key, read from http://<release>-user-service:<port>/.well-known/openid-configuration.
+# Access tokens: Keycloak issues them (it owns sign-up, log-in and passwords, see "keycloak" below); UserService,
+# PaymentService and ProvisioningService validate them with the signing keys they read from Keycloak's discovery document
+# (cluster-internal, http://<release>-keycloak:8080/realms/<realm>/.well-known/openid-configuration).
 auth:
-  issuer: rso-user-service
-  audience: rso-api
-  # The public half of userService.auth.signingKey (PEM, not a secret: openssl rsa -in key.pem -pubout). When set, the
-  # other services use it directly, so validating tokens never depends on UserService being up.
-  signingPublicKey: ""
+  # The token's `iss`: the realm URL as the browser sees it. Empty: http://<keycloak.hostname>/realms/<keycloak.realm>
+  # (set it when Keycloak is served over https).
+  issuer: ""
+  audience: rso-api      # `aud`, put in the token by a mapper of the realm's client
+
+# ---------------------------------------------------------------------------
+# Keycloak: sign-up, log-in, passwords, tokens. Its realm (the "rso" realm with the web app's client, sign-up switched on and
+# the rso-api audience mapper) is imported from a ConfigMap on its first start; changing the values below afterwards does not
+# change a realm that already exists (use the admin console, or delete its database). Uses its own PostgreSQL database.
+# ---------------------------------------------------------------------------
+keycloak:
+  enabled: true
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.8.2"
+  realm: rso
+  hostname: ""           # required: where the browser reaches Keycloak, e.g. keycloak.<ip>.sslip.io (host only)
+  appUrl: ""             # required: the web app's address, e.g. http://<ip>.sslip.io (redirect URI and web origin of its client)
+  sslRequired: none      # the realm's "require SSL": none while everything is plain http (test only); external behind https
+  ingress:
+    enabled: true
+    className: ""
+    annotations: {}
+  # Two Secrets (or one with all keys) that you manage:
+  database:
+    existingSecret: ""   # keys: KC_DB_URL (jdbc:postgresql://host:5432/KeycloakDb?sslmode=require), KC_DB_USERNAME, KC_DB_PASSWORD
+  admin:
+    existingSecret: ""   # keys: KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD (the first admin of the master realm)
+  dbPoolMaxSize: 5       # small: a small PostgreSQL server allows few connections, shared with the services
+  resources:
+    requests: { cpu: 200m, memory: 768Mi }
+    limits: { memory: 1536Mi }
 
 # ---------------------------------------------------------------------------
 # API gateway: the only thing exposed to the outside. Routes REST and GraphQL only,
@@ -53,9 +81,6 @@ gateway:
   # path prefix -> backend. Add a route here to expose another endpoint.
   routes:
     - path: /graphql
-      service: user-service
-      port: 8080
-    - path: /auth
       service: user-service
       port: 8080
     - path: /payment-methods
@@ -101,10 +126,6 @@ userService:
   database:
     connectionString: ""   # Host=...;Port=5432;Database=UserServiceDb;Username=...;Password=...
     existingSecret: ""     # key: ConnectionStrings__DefaultConnection
-  auth:
-    signingKey: ""         # RSA private key, PEM (openssl genrsa 2048). Changing it signs everyone out.
-    existingSecret: ""     # key: Auth__SigningKey
-    tokenLifetime: "01:00:00"
   resources:
     requests: { cpu: 100m, memory: 192Mi }
     limits: { memory: 384Mi }
