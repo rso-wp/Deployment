@@ -56,7 +56,8 @@ keycloak:
     existingSecret: ""   # keys: KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD (the first admin of the master realm)
   dbPoolMaxSize: 5       # small: a small PostgreSQL server allows few connections, shared with the services
   resources:
-    requests: { cpu: 200m, memory: 768Mi }
+    # Small CPU request: a small node has little CPU to hand out (requests, not usage, decide what fits). It can still burst.
+    requests: { cpu: 50m, memory: 768Mi }
     limits: { memory: 1536Mi }
 
 # ---------------------------------------------------------------------------
