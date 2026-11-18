@@ -172,3 +172,11 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+# ------------------------------------------------------------------------------------------------ ProvisionFunction code (function-publish.tf)
+
+variable "publish_function" {
+  description = "terraform apply also publishes ProvisionFunction's code to the Function App, when its source changed (runs nonLocal/publish-function.ps1: needs PowerShell, the .NET SDK and a logged-in az, and the ProvisionFunction repository next to this one). Off (default): publish by hand."
+  type        = bool
+  default     = false
+}

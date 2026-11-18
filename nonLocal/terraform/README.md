@@ -237,3 +237,14 @@ Grafana is off by default (it is billed per instance). Set `enable_monitoring = 
 gives Grafana's identity the **Log Analytics Reader** role on the workspace. In Grafana (`terraform output grafana_url`):
 **Explore** -> data source **Azure Monitor** -> service **Logs** -> pick the workspace -> paste a query like the ones above. A
 dashboard panel with a table or "Logs" visualization uses the same query. Metrics are in the Prometheus data source.
+
+## Publishing the function with `terraform apply`
+
+Terraform creates the Function App without its code (see step 6, `nonLocal/publish-function.ps1`). With
+`publish_function = true` in `terraform.tfvars`, `terraform apply` also runs that script, when it is needed: on the first
+apply, when the Function App is replaced, and when `Contracts`, `Features`, `Infrastructure`, `Program.cs`, `Function.csproj` or
+`host.json` of ProvisionFunction changed (`function-publish.tf`). Needs PowerShell, the .NET SDK, a logged-in `az`, and the
+ProvisionFunction repository next to this one (`<root>/Deployment`, `<root>/ProvisionFunction`). A failed publish fails the
+apply, and the next apply tries again. To publish without other changes:
+`terraform apply -replace='terraform_data.publish_function[0]'`.
+

@@ -34,3 +34,9 @@ stripe_price_id        = "price_..."
 # postgres_sku             = "B_Standard_B1ms"  # default; "B_Standard_B2s" allows far more connections, costs about 4 times as much
 # postgres_max_pool_size   = 5                  # default; raise it together with postgres_sku
 # node_vm_size             = "Standard_B2ms"    # default (8 GB); "Standard_B2s" (4 GB) is half the price but tight
+
+# ------------------------------------------------------------------------------------------------ ProvisionFunction code
+# true: terraform apply also publishes the function's code (runs nonLocal/publish-function.ps1) when its source changed.
+# Needs PowerShell, the .NET SDK, a logged-in az, and the ProvisionFunction repository next to this one. Default false:
+# publish by hand with nonLocal/publish-function.ps1.
+# publish_function = false
