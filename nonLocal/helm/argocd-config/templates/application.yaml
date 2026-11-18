@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rso
+  namespace: {{ .Release.Namespace }}
+spec:
+  project: default
+  source:
+    repoURL: {{ required "repo.url is required" .Values.repo.url | quote }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: {{ .Values.repo.path | quote }}
+    helm:
+      # The release was called rso when terraform installed it; the service names (rso-user-service, ...) depend on it.
+      releaseName: rso
+      valuesObject:
+        {{- toYaml .Values.rsoValues | nindent 8 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rso
+  syncPolicy:
+    # Applies what is in git (and the image tags Image Updater sets) as soon as the cluster runs, also right after you start
+    # a stopped one. Retries, because right after a cold start the databases or NATS may not answer yet.
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

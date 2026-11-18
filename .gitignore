@@ -1,0 +1,22 @@
+# This repository is public. Nothing in here may contain a secret.
+
+# Terraform: the state holds every password and the token signing key; tfvars hold the Stripe keys.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+
+# Build output and local files
+*.zip
+local.settings.json
+dev-signing-key.pem
+.env
+.env.*
+
+# A script that holds a registry token (images are published by the GitHub workflows of the service repositories)
+build-and-push.ps1

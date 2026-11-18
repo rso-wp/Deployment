@@ -1,0 +1,21 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: rso
+  namespace: {{ .Release.Namespace }}
+spec:
+  # "argocd": the new tag is stored on the Application itself (Helm parameter), no git commit and no git credentials needed.
+  writeBackConfig:
+    method: argocd
+  commonUpdateSettings:
+    updateStrategy: semver
+  applicationRefs:
+    - namePattern: rso
+      images:
+        {{- range .Values.images }}
+        - alias: {{ .alias }}
+          imageName: {{ printf "%s/%s:%s" $.Values.imageRegistry .repository $.Values.versionConstraint | quote }}
+          manifestTargets:
+            helm:
+              tag: {{ .tagKey | quote }}
+        {{- end }}

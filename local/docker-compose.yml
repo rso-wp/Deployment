@@ -1,0 +1,198 @@
+# Local development: the infrastructure (Postgres, MySQL, NATS, Azurite, ...) and, with the "apps" profile, the services.
+#
+#   Infrastructure only (run the services from your IDE / dotnet run):
+#     docker compose -f local/docker-compose.yml up -d
+#
+#   Everything, services included (gateway on http://localhost:8000):
+#     docker compose -f local/docker-compose.yml --profile apps up -d --build
+
+# Azurite connection string for the containers (devstoreaccount1 and its key are Azurite's public, fixed dev account).
+x-azurite: &azurite "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;TableEndpoint=http://azurite:10002/devstoreaccount1;"
+
+services:
+  # ---------------------------------------------------------------- infrastructure
+  postgres:
+    image: postgres:16-alpine
+    container_name: rso-postgres
+    environment:
+      POSTGRES_USER: rso
+      POSTGRES_PASSWORD: rso
+      POSTGRES_DB: rso
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rso"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres-provisioning:
+    image: postgres:16-alpine
+    container_name: rso-postgres-provisioning
+    environment:
+      POSTGRES_USER: rso
+      POSTGRES_PASSWORD: rso
+      POSTGRES_DB: ProvisioningServiceDb
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_provisioning_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rso"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Tenant WordPress databases. ProvisionFunction creates one database + user per tenant as root.
+  # The WordPress containers reach it as rso-mysql:3306 on the "rso" network.
+  mysql:
+    image: mysql:8.4
+    container_name: rso-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rso
+    ports:
+      - "3306:3306"
+    volumes:
+      - tenant_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -prso --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Azure Storage emulator: the provisioning queues (ProvisioningService <-> ProvisionFunction) and the Functions host's
+  # own storage. Well-known dev account devstoreaccount1; "UseDevelopmentStorage=true" from the host.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    container_name: rso-azurite
+    command: ["azurite", "--blobHost", "0.0.0.0", "--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0", "--location", "/data", "--loose", "--skipApiVersionCheck"]
+    ports:
+      - "10000:10000"   # blob
+      - "10001:10001"   # queue
+      - "10002:10002"   # table
+    volumes:
+      - azurite_data:/data
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: rso-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # HTTP monitoring
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------- services (profile "apps")
+  # Same host ports as `dotnet run`, so URLs do not change between the two ways of running.
+  # ASPNETCORE_ENVIRONMENT=Development: migrations run on start. UserService generates its token signing key on start
+  # (the container cannot keep it, so restarting user-service signs everyone out).
+  user-service:
+    profiles: [apps]
+    build:
+      context: ../../UserService
+      dockerfile: Api/Dockerfile
+    container_name: rso-user-service
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=UserServiceDb;Username=rso;Password=rso
+      Nats__Url: nats://nats:4222
+    ports:
+      - "5076:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+
+  payment-service:
+    profiles: [apps]
+    build:
+      context: ../../PaymentService
+      dockerfile: PaymentService/Dockerfile
+    container_name: rso-payment-service
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=PaymentServiceDb;Username=rso;Password=rso
+      Nats__Url: nats://nats:4222
+      Auth__MetadataAddress: http://user-service:8080/.well-known/openid-configuration
+      Stripe__UseFake: "true"   # set to "false" and provide real test keys to call Stripe
+    ports:
+      - "5263:5263"   # gRPC (only so `dotnet run` services can reach it; the gateway never routes it)
+      - "5264:5264"   # REST
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+
+  provisioning-service:
+    profiles: [apps]
+    build:
+      context: ../../ProvisioningService
+      dockerfile: Api/Dockerfile
+    container_name: rso-provisioning-service
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__DefaultConnection: Host=postgres-provisioning;Port=5432;Database=ProvisioningServiceDb;Username=rso;Password=rso
+      Nats__Url: nats://nats:4222
+      Auth__MetadataAddress: http://user-service:8080/.well-known/openid-configuration
+      PaymentService__GrpcUrl: http://payment-service:5263
+      ProvisioningQueues: *azurite
+    ports:
+      - "5151:8080"
+    depends_on:
+      postgres-provisioning: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      azurite: { condition: service_started }
+      payment-service: { condition: service_started }
+
+  provision-function:
+    profiles: [apps]
+    build:
+      context: ../../ProvisionFunction
+      dockerfile: Function/Dockerfile
+    container_name: rso-provision-function
+    environment:
+      AZURE_FUNCTIONS_ENVIRONMENT: Development
+      AzureWebJobsStorage: *azurite
+      ProvisioningQueues: *azurite
+      MySql__AdminConnectionString: Server=mysql;Port=3306;User ID=root;Password=rso
+      MySql__HostForSites: rso-mysql:3306
+      Docker__Endpoint: unix:///var/run/docker.sock
+      Docker__Network: rso
+    volumes:
+      # Creates the tenant WordPress containers on the host's docker.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      mysql: { condition: service_healthy }
+      azurite: { condition: service_started }
+
+  gateway:
+    profiles: [apps]
+    image: nginx:1.27-alpine
+    container_name: rso-gateway
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - user-service
+      - payment-service
+      - provisioning-service
+
+networks:
+  default:
+    name: rso   # fixed name: ProvisionFunction attaches the WordPress containers to it
+
+volumes:
+  azurite_data:
+  postgres_data:
+  postgres_provisioning_data:
+  tenant_mysql_data:
+  nats_data:

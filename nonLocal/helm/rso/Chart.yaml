@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rso
+description: RSO platform - UserService, PaymentService, ProvisioningService behind an nginx API gateway
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  # Tenant WordPress site. Not deployed with the platform (enabled: false): ProvisioningService's cloud function
+  # installs it once per tenant straight from charts/wordpress. Enable only to try one out.
+  - name: wordpress
+    version: 0.1.0
+    repository: ""
+    condition: wordpress.enabled

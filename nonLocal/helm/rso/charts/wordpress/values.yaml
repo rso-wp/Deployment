@@ -1,0 +1,52 @@
+# One release of this chart = one tenant's WordPress site. ProvisioningService's cloud function installs it:
+#   helm upgrade --install wp-<name> nonLocal/helm/rso/charts/wordpress -n tenants \
+#     --set tenant.name=<name> --set database.host=... --set database.name=... \
+#     --set database.user=... --set database.password=...
+
+tenant:
+  name: ""                 # DNS label, same as ProvisionedService.Name. Required.
+
+image:
+  repository: wordpress
+  tag: 6-apache
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# External database (a MySQL/MariaDB database for this tenant, provisioned separately).
+database:
+  host: ""                 # host or host:port
+  name: ""
+  user: ""
+  password: ""
+  existingSecret: ""       # Secret with keys: username, password (then user/password above are ignored)
+  tablePrefix: wp_
+
+# Uploads, plugins, themes. WordPress is stateful, so keep replicas at 1 unless the storage is ReadWriteMany.
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  existingClaim: ""
+
+replicas: 1
+
+service:
+  port: 80
+
+# Public host is <tenant.name>.<ingress.baseDomain>
+ingress:
+  enabled: true
+  className: ""
+  baseDomain: ""           # e.g. sites.example.com (needs a wildcard DNS record / cert)
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""         # e.g. a wildcard cert secret for *.<baseDomain>
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 512Mi }
+
+extraEnv: []               # e.g. - name: WORDPRESS_CONFIG_EXTRA
+                           #        value: "define('WP_DEBUG', false);"

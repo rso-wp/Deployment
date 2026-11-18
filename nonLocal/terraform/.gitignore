@@ -1,0 +1,6 @@
+# Secrets and state: the state holds every password and the token signing key.
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log

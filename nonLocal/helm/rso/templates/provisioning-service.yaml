@@ -1,0 +1,66 @@
+{{- $cfg := .Values.provisioningService -}}
+{{- $name := "provisioning-service" -}}
+{{- $full := include "rso.name" (dict "root" . "name" $name) -}}
+{{- $ownDb := not $cfg.database.existingSecret -}}
+{{- $ownQueues := not (or $cfg.queues.existingSecret $cfg.queues.serviceUri) -}}
+{{- if or $ownDb $ownQueues }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "rso.labels" (dict "root" . "name" $name) | nindent 4 }}
+type: Opaque
+stringData:
+  {{- if $ownDb }}
+  ConnectionStrings__DefaultConnection: {{ required "provisioningService.database.connectionString is required" $cfg.database.connectionString | quote }}
+  {{- end }}
+  {{- if $ownQueues }}
+  ProvisioningQueues: {{ required "provisioningService.queues.connectionString (or serviceUri) is required" $cfg.queues.connectionString | quote }}
+  {{- end }}
+---
+{{- end }}
+{{- $env := include "provisioning-service.env" (dict "root" . "full" $full) }}
+{{ include "rso.workload" (dict "root" . "name" $name "cfg" $cfg "ports" (list (dict "name" "http" "port" $cfg.port)) "env" $env "httpPort" $cfg.port) }}
+
+{{- define "provisioning-service.env" -}}
+{{- $cfg := .root.Values.provisioningService -}}
+{{- $pay := .root.Values.paymentService -}}
+- name: ASPNETCORE_HTTP_PORTS
+  value: {{ $cfg.port | quote }}
+- name: Database__MigrateOnStartup
+  value: {{ .root.Values.global.migrateOnStartup | quote }}
+- name: Auth__Issuer
+  value: {{ .root.Values.auth.issuer | quote }}
+- name: Auth__Audience
+  value: {{ .root.Values.auth.audience | quote }}
+- name: Auth__MetadataAddress
+  value: {{ include "rso.userServiceMetadata" .root | quote }}
+{{- with .root.Values.auth.signingPublicKey }}
+- name: Auth__SigningPublicKey
+  value: {{ . | toJson }}
+{{- end }}
+- name: Provisioning__StripePriceId
+  value: {{ required "provisioningService.stripePriceId is required" $cfg.stripePriceId | quote }}
+- name: Provisioning__BaseDomain
+  value: {{ required "provisioningService.baseDomain is required" $cfg.baseDomain | quote }}
+- name: Nats__Url
+  value: {{ required "nats.url is required" .root.Values.nats.url | quote }}
+- name: PaymentService__GrpcUrl
+  value: {{ printf "http://%s:%v" (include "rso.name" (dict "root" .root "name" "payment-service")) $pay.grpcPort | quote }}
+- name: ConnectionStrings__DefaultConnection
+  valueFrom:
+    secretKeyRef:
+      name: {{ default .full $cfg.database.existingSecret }}
+      key: ConnectionStrings__DefaultConnection
+{{- if $cfg.queues.serviceUri }}
+- name: ProvisioningQueues__queueServiceUri
+  value: {{ $cfg.queues.serviceUri | quote }}
+{{- else }}
+- name: ProvisioningQueues
+  valueFrom:
+    secretKeyRef:
+      name: {{ default .full $cfg.queues.existingSecret }}
+      key: ProvisioningQueues
+{{- end }}
+{{- end -}}

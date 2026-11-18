@@ -1,0 +1,22 @@
+# Installed by nonLocal/terraform/argocd.tf (helm_release.argocd_rso), after Argo CD and Argo CD Image Updater. Terraform passes
+# repo, rsoValues, imageRegistry and versionConstraint; the rest are defaults.
+
+# Where Argo CD reads the rso chart from (a git repository that contains it).
+repo:
+  url: ""        # required
+  revision: main
+  path: rso      # directory of the chart in that repository
+
+# Values for the rso chart (what terraform used to pass to its helm release): base domain, secret names, signing public key...
+# The image tags in it are only the starting point: Image Updater overrides them with Helm parameters.
+rsoValues: {}
+
+# Images Image Updater keeps current. Image: <imageRegistry>/<repository>:<versionConstraint>; the new tag is written to the
+# rso chart value <tagKey>.
+imageRegistry: docker.io/armodilo
+versionConstraint: ">=0.0.0"   # semver constraint (Masterminds syntax), e.g. "1.x" or "~1.2". "v" prefixes on tags are fine.
+images:
+  - { alias: frontend,            repository: wordpressasaserviceui, tagKey: frontend.image.tag }
+  - { alias: userservice,         repository: userservice,           tagKey: userService.image.tag }
+  - { alias: paymentservice,      repository: paymentservice,        tagKey: paymentService.image.tag }
+  - { alias: provisioningservice, repository: provisioningservice,   tagKey: provisioningService.image.tag }

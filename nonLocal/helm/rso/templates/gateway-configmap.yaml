@@ -1,0 +1,52 @@
+{{- $name := "gateway" -}}
+{{- $full := include "rso.name" (dict "root" . "name" $name) -}}
+{{- $ctx := dict "root" . "name" $name -}}
+{{- $routes := .Values.gateway.routes -}}
+{{- if .Values.frontend.enabled -}}
+{{- $routes = append $routes (dict "path" "/" "service" "frontend" "port" .Values.frontend.port) -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "rso.labels" $ctx | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      server_tokens off;
+      client_max_body_size 1m;
+
+      # Only the routes listed in values.yaml (gateway.routes) are forwarded, plus everything else to the frontend when
+      # frontend.enabled (longer prefixes win, so the API routes still reach the services). gRPC is never routed.
+    {{- range $routes }}
+      location {{ .path }} {
+        proxy_pass http://{{ include "rso.name" (dict "root" $ "name" .service) }}:{{ .port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+      }
+    {{- end }}
+
+      location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+      }
+
+    {{- if not .Values.frontend.enabled }}
+
+      location / {
+        return 404;
+      }
+    {{- end }}
+    }
+  map.conf: |
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      close;
+    }

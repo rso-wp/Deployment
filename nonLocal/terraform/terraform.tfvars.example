@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (kept out of git) and fill in.
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "westeurope"
+
+image_tag = "v0.1.0"
+
+stripe_secret_key      = "sk_test_..."
+stripe_publishable_key = "pk_test_..."
+stripe_price_id        = "price_..."
+# stripe_webhook_secret = "whsec_..."   # after creating the webhook (step 5 in README.md)

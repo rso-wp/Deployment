@@ -1,0 +1,157 @@
+# Postgres is NOT part of this chart (provisioned with terraform). Pass connection strings below.
+
+global:
+  # Images are <imageRegistry>/<service.image.repository>:<service.image.tag>
+  imageRegistry: docker.io/armodilo
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  # Apply EF Core migrations when a service starts (Database__MigrateOnStartup). Off: run them yourself.
+  migrateOnStartup: false
+  metrics:
+    # Pod annotations prometheus.io/* on the platform services (/metrics, OpenTelemetry Prometheus exporter). Azure Managed
+    # Prometheus picks them up (terraform sets podannotationnamespaceregex); turn off if nothing scrapes.
+    scrape: true
+
+# NATS with JetStream (not part of this chart), used by all three services: users.events.* (UserService -> PaymentService,
+# ProvisioningService) and payments.events.* (PaymentService -> ProvisioningService). Provisioning uses storage queues.
+nats:
+  url: ""                  # e.g. nats://nats.messaging:4222
+
+# Access tokens: UserService signs them (userService.auth.signingKey); PaymentService and ProvisioningService validate
+# them with its public key, read from http://<release>-user-service:<port>/.well-known/openid-configuration.
+auth:
+  issuer: rso-user-service
+  audience: rso-api
+  # The public half of userService.auth.signingKey (PEM, not a secret: openssl rsa -in key.pem -pubout). When set, the
+  # other services use it directly, so validating tokens never depends on UserService being up.
+  signingPublicKey: ""
+
+# ---------------------------------------------------------------------------
+# API gateway: the only thing exposed to the outside. Routes REST and GraphQL only,
+# never gRPC (PaymentService :5263 is cluster-internal).
+# ---------------------------------------------------------------------------
+gateway:
+  replicas: 2
+  image:
+    repository: nginx
+    tag: 1.27-alpine
+  service:
+    type: ClusterIP        # use LoadBalancer if you do not use the ingress
+    port: 80
+  ingress:
+    enabled: false
+    className: ""
+    host: ""               # e.g. api.example.com
+    annotations: {}
+    tls: []                # - secretName: rso-tls
+                           #   hosts: [api.example.com]
+  # path prefix -> backend. Add a route here to expose another endpoint.
+  routes:
+    - path: /graphql
+      service: user-service
+      port: 8080
+    - path: /auth
+      service: user-service
+      port: 8080
+    - path: /payment-methods
+      service: payment-service
+      port: 5264
+    - path: /provisions
+      service: provisioning-service
+      port: 8080
+    - path: /stripe/webhooks     # Stripe -> PaymentService (signature-verified, no user auth)
+      service: payment-service
+      port: 5264
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 128Mi }
+
+# ---------------------------------------------------------------------------
+# Frontend (WordpressAsAServiceUi, static files on nginx). The gateway sends every path that is not an API route
+# to it, so the app and the APIs share one origin. Disabled: the gateway answers 404 there instead.
+# ---------------------------------------------------------------------------
+frontend:
+  enabled: true
+  replicas: 2
+  image:
+    repository: wordpressasaserviceui
+    tag: v0.1.0
+  port: 8080
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 64Mi }
+
+# ---------------------------------------------------------------------------
+# Platform services. Image names are placeholders until decided: armodilo/<folder>:vx.y.z (lowercase,
+# because docker repository names must be lowercase).
+# For each secret-bearing value use either the plain value (chart creates a Secret) or
+# existingSecret (name of a Secret you manage, with the keys listed next to it).
+# ---------------------------------------------------------------------------
+userService:
+  replicas: 1
+  image:
+    repository: userservice
+    tag: v0.1.0
+  port: 8080
+  database:
+    connectionString: ""   # Host=...;Port=5432;Database=UserServiceDb;Username=...;Password=...
+    existingSecret: ""     # key: ConnectionStrings__DefaultConnection
+  auth:
+    signingKey: ""         # RSA private key, PEM (openssl genrsa 2048). Changing it signs everyone out.
+    existingSecret: ""     # key: Auth__SigningKey
+    tokenLifetime: "01:00:00"
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 384Mi }
+
+paymentService:
+  replicas: 1
+  image:
+    repository: paymentservice
+    tag: v0.1.0
+  grpcPort: 5263           # cluster-internal only
+  httpPort: 5264
+  cors:
+    allowedOrigins: []     # frontend origins, e.g. [https://app.example.com]
+  database:
+    connectionString: ""
+    existingSecret: ""     # key: ConnectionStrings__DefaultConnection
+  stripe:
+    secretKey: ""
+    publishableKey: ""     # pk_... handed to the frontend for Stripe Elements (not a secret)
+    webhookSecret: ""
+    existingSecret: ""     # keys: Stripe__SecretKey, Stripe__WebhookSecret
+  # Restrict the gRPC port to ProvisioningService pods. Needs a CNI that enforces NetworkPolicy.
+  networkPolicy:
+    enabled: false
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 384Mi }
+
+provisioningService:
+  replicas: 1
+  image:
+    repository: provisioningservice
+    tag: v0.1.0
+  port: 8080
+  stripePriceId: ""        # Stripe Price of the WordPress subscription
+  baseDomain: ""           # sites are served at <site>.<tenant>.<baseDomain>
+  database:
+    connectionString: ""
+    existingSecret: ""     # key: ConnectionStrings__DefaultConnection
+  # Azure Storage account with the provisioning queues (provision-site, deprovision-site, provisioning-events), shared
+  # with ProvisionFunction (Azure Function). One of:
+  queues:
+    connectionString: ""   # storage account connection string (chart creates a Secret)
+    existingSecret: ""     # key: ProvisioningQueues
+    serviceUri: ""         # https://<account>.queue.core.windows.net, with a workload identity (pod setup not in the chart yet)
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 384Mi }
+
+# ---------------------------------------------------------------------------
+# Tenant WordPress site: subchart in charts/wordpress (see its values.yaml for all options).
+# Normally installed per tenant by code, not with the platform, so it is off here.
+# ---------------------------------------------------------------------------
+wordpress:
+  enabled: false

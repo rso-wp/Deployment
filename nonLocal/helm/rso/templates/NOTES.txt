@@ -1,0 +1,16 @@
+RSO installed as release "{{ .Release.Name }}".
+
+Public entry point: service {{ include "rso.name" (dict "root" . "name" "gateway") }}
+{{- if .Values.gateway.ingress.enabled }} (ingress host: {{ .Values.gateway.ingress.host | default "<any>" }})
+{{- else }} - port-forward to try it:
+  kubectl port-forward svc/{{ include "rso.name" (dict "root" . "name" "gateway") }} 8080:{{ .Values.gateway.service.port }}
+{{- end }}
+
+Routed paths:
+{{- range .Values.gateway.routes }}
+  {{ .path }} -> {{ .service }}:{{ .port }}
+{{- end }}
+{{- if .Values.frontend.enabled }}
+  / (everything else) -> frontend:{{ .Values.frontend.port }}
+{{- end }}
+PaymentService gRPC ({{ .Values.paymentService.grpcPort }}) is cluster-internal only.
