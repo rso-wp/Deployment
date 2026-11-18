@@ -7,6 +7,9 @@
 *.tfvars
 !*.tfvars.example
 *.tfplan
+# `terraform plan -out tfplan`: a plan file contains every secret value of the plan
+tfplan
+tfplan.*
 crash.log
 override.tf
 override.tf.json
