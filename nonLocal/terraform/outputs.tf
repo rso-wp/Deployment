@@ -25,7 +25,7 @@ output "function_app_name" {
 
 output "grafana_url" {
   description = "Azure Managed Grafana. Sign in with your Entra ID account (you are Grafana Admin). Explore → data source 'Managed_Prometheus_...'."
-  value       = azurerm_dashboard_grafana.grafana.endpoint
+  value       = var.enable_monitoring ? azurerm_dashboard_grafana.grafana[0].endpoint : "Monitoring is off (enable_monitoring = false)."
 }
 
 output "kubectl_credentials" {

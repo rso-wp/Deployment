@@ -39,9 +39,21 @@ variable "resource_group_name" {
 }
 
 variable "postgres_sku" {
-  description = "PostgreSQL Flexible Server size, shared by the three services. B_Standard_B1ms allows only ~35 connections, which the services' pools can use up under load (then sign-up and log-in fail too); B_Standard_B2s allows ~400 and costs about twice as much."
+  description = "PostgreSQL Flexible Server size, shared by the three services. B_Standard_B1ms (the cheapest) allows only ~35 connections: with postgres_max_pool_size = 5 that is enough for a test setup, but under load the pools can use it up (then sign-up and log-in fail too). B_Standard_B2s allows ~400 and costs about four times as much."
   type        = string
-  default     = "B_Standard_B2s"
+  default     = "B_Standard_B1ms"
+}
+
+variable "postgres_max_pool_size" {
+  description = "Maximum Pool Size of every connection pool of the services (each service has two or three, per database). Small, so that three services fit in the connection limit of a small PostgreSQL server; raise it with a bigger postgres_sku."
+  type        = number
+  default     = 5
+}
+
+variable "enable_monitoring" {
+  description = "Azure Managed Grafana + managed Prometheus (Azure Monitor workspace, data collection rule, the ama-metrics agents on the node). Off by default: Grafana is billed per instance and the agents use memory on the node."
+  type        = bool
+  default     = false
 }
 
 variable "node_vm_size" {

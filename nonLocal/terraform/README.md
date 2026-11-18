@@ -12,7 +12,7 @@ See also the [repository README](../../README.md) (layout, local setup, Argo CD)
 | MySQL Flexible Server | tenant WordPress databases (used by ProvisionFunction) |
 | Storage account | queues `provision-site`, `deprovision-site`, `provisioning-events`; the Function App's storage |
 | Function App (Flex Consumption) | ProvisionFunction. Its managed identity can use the queues and the AKS `tenants` namespace |
-| Azure Monitor workspace + Azure Managed Grafana | managed Prometheus scrapes the services' `/metrics`; `grafana_url` is the Grafana (Entra ID sign-in). Grafana Standard is billed per instance and active user |
+| Azure Monitor workspace + Azure Managed Grafana (only with `enable_monitoring = true`) | managed Prometheus scrapes the services' `/metrics`; `grafana_url` is the Grafana (Entra ID sign-in). Grafana Standard is billed per instance and active user |
 
 All secrets (database passwords, the token signing key, the Stripe keys) are generated or read from variables and stored as
 Kubernetes Secrets, never in helm values. **They are also in the terraform state**, so keep `terraform.tfstate` private.
@@ -156,3 +156,48 @@ az aks stop -g rso-rg -n (terraform output -raw aks_name)
 | A site stays `Queued` | The function code isn't published (step 6), or it can't start: Function App → Log stream |
 | A site becomes `Failed` | The function's log has the reason. `not scheduled ... node(s) exceed max volume count` means the node's disk limit (see the top); `ImagePullBackOff` means Docker Hub rate limits or no network |
 | Every API call returns 401 after signing in | PaymentService and ProvisioningService get the signing key from UserService. Is `rso-user-service` running? |
+
+## Keeping costs low
+
+The defaults are the cheapest setup that still works for testing. Pay-as-you-go list prices in `spaincentral`
+(November 2026, USD, running 24/7, 730 hours a month; Azure's public price list):
+
+| Item | Setting | About per month |
+|---|---|---|
+| AKS node | `node_vm_size = "Standard_B2ms"` (8 GB) | $67 |
+| | `"Standard_B2s"` (4 GB) | $33 |
+| AKS node OS disk | `os_disk_size_gb = 32` (P4); the default is 128 GB (P10) | $5.8 instead of $21.7 |
+| PostgreSQL | `postgres_sku = "B_Standard_B1ms"` | $14.5 |
+| | `"B_Standard_B2s"` | $58 |
+| MySQL | `B_Standard_B1ms` (already the smallest) | $14.5 |
+| Grafana + managed Prometheus | `enable_monitoring = false` (default) | not created; Grafana is billed per instance |
+
+What the defaults trade away:
+
+- **PostgreSQL B1ms allows about 35 connections.** The three services share them, which is why `postgres_max_pool_size` is 5.
+  Under load the pools can run out (sign-up and log-in then fail). Check with
+  `select count(*) from pg_stat_activity;` and raise `postgres_sku` back to `B_Standard_B2s` if it gets close to 35.
+- **The node stays on B2ms (8 GB).** B2s halves the node price, but platform + Argo CD + a few WordPress sites is tight in 4 GB
+  (pods stay `Pending` or get evicted). Try it with `node_vm_size = "Standard_B2s"` once everything is deployed; changing the
+  size replaces the node.
+- **One replica** of the gateway and the frontend, no `nats-box` pod, no monitoring agents.
+- **No Grafana.** Set `enable_monitoring = true` to bring it back (dashboards in Grafana are lost when it is switched off).
+
+Fixed costs you can't remove: the Standard load balancer and public IP that AKS needs, the 32 GB minimum PostgreSQL disk,
+and the disks of the WordPress sites (2 GB each).
+
+### Stop everything while you are not testing
+
+Stopped compute is not billed; the disks, the public IP and storage still are. Stop the databases too, they are
+billed while they run:
+
+```powershell
+az aks stop -g rso-rg -n <aks_name>                       # terraform output aks_name
+az postgres flexible-server list -g rso-rg -o table       # names of the two database servers
+az postgres flexible-server stop -g rso-rg -n <postgres name>
+az mysql flexible-server stop -g rso-rg -n <mysql name>
+```
+
+Start them in this order, databases first: `az postgres flexible-server start ...`, `az mysql flexible-server start ...`,
+then `az aks start ...`. Azure starts a stopped database server by itself after 7 days. `terraform apply` needs the cluster
+running.

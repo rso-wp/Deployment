@@ -155,6 +155,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
     name                        = "system"
     vm_size                     = var.node_vm_size
     node_count                  = var.node_count
+    os_disk_size_gb             = 32 # the default is 128 GB (a P10 disk, about four times the price of the 32 GB P4)
     temporary_name_for_rotation = "systemtmp"
   }
 
@@ -171,7 +172,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
   local_account_disabled = false
 
   # Azure Monitor managed Prometheus: runs the ama-metrics agents. The workspace and rules are in monitoring.tf.
-  monitor_metrics {}
+  dynamic "monitor_metrics" {
+    for_each = var.enable_monitoring ? [1] : []
+    content {}
+  }
 
   # Azure CNI powered by Cilium, which enforces NetworkPolicies (tenant isolation below). Without a policy engine the
   # policies are accepted but do nothing.
@@ -352,6 +356,7 @@ resource "helm_release" "nats" {
   version    = "2.15.1"
 
   values = [yamlencode({
+    natsBox = { enabled = false } # a helper pod with the nats CLI; not needed
     config = {
       jetstream = {
         enabled   = true
@@ -387,8 +392,8 @@ resource "tls_private_key" "signing" {
 
 locals {
   # Maximum Pool Size: each service has two or three pools (EF Core, Wolverine, Marten), and the server's connection limit
-  # is shared by all of them (B1ms: about 35 usable).
-  pg = { for db in local.databases : db => "Host=${local.pg_host};Port=5432;Database=${db};Username=rsoadmin;Password=${random_password.postgres.result};Ssl Mode=Require;Maximum Pool Size=20" }
+  # is shared by all of them (B1ms: about 35 usable), so keep the pools small.
+  pg = { for db in local.databases : db => "Host=${local.pg_host};Port=5432;Database=${db};Username=rsoadmin;Password=${random_password.postgres.result};Ssl Mode=Require;Maximum Pool Size=${var.postgres_max_pool_size}" }
 }
 
 # Secrets for the chart (its existingSecret values), so nothing secret goes through helm values.
@@ -436,9 +441,10 @@ locals {
     nats = { url = "nats://nats.messaging:4222" }
     auth = { signingPublicKey = tls_private_key.signing.public_key_pem }
     gateway = {
-      ingress = { enabled = true, className = "traefik", host = local.base_domain }
+      replicas = 1
+      ingress  = { enabled = true, className = "traefik", host = local.base_domain }
     }
-    frontend = { image = { tag = var.image_tag } }
+    frontend = { replicas = 1, image = { tag = var.image_tag } }
     userService = {
       image    = { tag = var.image_tag }
       database = { existingSecret = kubernetes_secret_v1.user_service.metadata[0].name }
