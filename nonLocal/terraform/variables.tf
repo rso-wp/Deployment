@@ -180,3 +180,9 @@ variable "publish_function" {
   type        = bool
   default     = false
 }
+
+variable "expose_argocd_ui" {
+  description = "Make the Argo CD web UI reachable from the internet at http://argocd.<base domain> (through Traefik). It is plain HTTP, so the admin password travels unencrypted: use a throwaway password and turn this off when you do not need it. Off (default): only through kubectl port-forward. Needs deploy_repo_url."
+  type        = bool
+  default     = false
+}

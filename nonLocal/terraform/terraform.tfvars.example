@@ -21,6 +21,8 @@ stripe_price_id        = "price_..."
 # deploy_repo_username = "<you>"                # private repository only
 # deploy_repo_password = "<token with read access>"
 # image_version_constraint = ">=0.0.0"          # which tags may be deployed, e.g. "1.x"
+# expose_argocd_ui = false                     # default. true: the Argo CD web UI at http://argocd.<base domain>, plain HTTP
+                                                 # (the admin password travels unencrypted); false: kubectl port-forward only
 
 # ------------------------------------------------------------------------------------------------ Logs and metrics
 # enable_logging    = true     # default: logs of the services and the function go to Application Insights (Log Analytics)

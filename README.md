@@ -80,6 +80,10 @@ Both run in the cluster, so after `az aks start` they catch up on whatever chang
    kubectl -n argocd get imageupdater rso -o yaml                    # when it last checked, what it updated
    ```
 
+   To open the web UI without a port-forward, set `expose_argocd_ui = true` in `terraform.tfvars` and `terraform apply`: it is
+   then at `http://argocd.<base domain>` (`terraform output argocd_url`), user `admin`. It is **plain HTTP**, so the admin
+   password travels unencrypted: use it for testing only and set it back to `false` (or leave it off) otherwise.
+
 From then on the chart in `nonLocal/helm/rso` is what Argo CD deploys: **change the chart here, not in a copy**. `image_tag`
 in Terraform only seeds the starting tags; Image Updater sets the real ones (semver tags only, the `v` prefix is fine).
 Turning it off again: set `deploy_repo_url = ""` and `terraform apply`.

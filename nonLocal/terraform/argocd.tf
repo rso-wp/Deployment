@@ -8,6 +8,8 @@ locals {
   argocd_enabled   = var.deploy_repo_url != ""
   argo_helm_repo   = "https://argoproj.github.io/argo-helm"
   argocd_namespace = "argocd"
+  argocd_host      = "argocd.${local.base_domain}" # one label before the base domain: no clash with a site (site.tenant.<base>)
+  argocd_url       = "http://${local.argocd_host}"
 }
 
 resource "kubernetes_namespace_v1" "argocd" {
@@ -27,11 +29,20 @@ resource "helm_release" "argocd" {
   timeout    = 600
 
   # One small node: leave out what a single-user setup does not need.
-  values = [yamlencode({
-    dex            = { enabled = false } # no SSO, you sign in as admin
-    notifications  = { enabled = false }
-    applicationSet = { replicas = 0 }
-  })]
+  # Two documents, merged in order by Helm: the second one only when the UI is public (expose_argocd_ui): the web UI
+  # through Traefik at http://argocd.<base domain>, plain HTTP.
+  values = concat(
+    [yamlencode({
+      dex            = { enabled = false } # no SSO, you sign in as admin
+      notifications  = { enabled = false }
+      applicationSet = { replicas = 0 }
+    })],
+    var.expose_argocd_ui ? [yamlencode({
+      global  = { domain = local.argocd_host }
+      configs = { params = { "server.insecure" = true }, cm = { url = local.argocd_url } } # Traefik talks HTTP to the server
+      server  = { ingress = { enabled = true, ingressClassName = "traefik", tls = false } }
+    })] : []
+  )
 }
 
 # Reads the new tags from Docker Hub (public images, no credentials) and changes the Application's image tags. In the same
