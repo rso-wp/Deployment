@@ -1,11 +1,36 @@
-# Copy to terraform.tfvars (kept out of git) and fill in.
+# Copy to terraform.tfvars (kept out of git) and fill in. Only placeholders belong in this file.
 
 subscription_id = "00000000-0000-0000-0000-000000000000"
 location        = "westeurope"
 
-image_tag = "v0.1.0"
+# Starting tag of the platform images (armodilo/<image>:<tag> on Docker Hub). With Argo CD (below) Image Updater moves to
+# newer tags by itself; this is only where it starts.
+image_tag = "v1.0.0"
 
 stripe_secret_key      = "sk_test_..."
 stripe_publishable_key = "pk_test_..."
 stripe_price_id        = "price_..."
 # stripe_webhook_secret = "whsec_..."   # after creating the webhook (step 5 in README.md)
+
+# ------------------------------------------------------------------------------------------------ Argo CD (optional)
+# Set: Argo CD deploys the platform chart from this git repository and Argo CD Image Updater keeps the image tags current.
+# Empty (default): Terraform installs the chart itself. See "Argo CD" in the repository README.
+# deploy_repo_url      = "https://github.com/<you>/Deployment.git"
+# deploy_repo_revision = "main"                 # default
+# deploy_repo_path     = "nonLocal/helm/rso"    # default
+# deploy_repo_username = "<you>"                # private repository only
+# deploy_repo_password = "<token with read access>"
+# image_version_constraint = ">=0.0.0"          # which tags may be deployed, e.g. "1.x"
+
+# ------------------------------------------------------------------------------------------------ Logs and metrics
+# enable_logging    = true     # default: logs of the services and the function go to Application Insights (Log Analytics)
+# log_daily_cap_gb  = 0.15     # default: most data per day; about 4.5 GB a month, under the 5 GB that are free
+# enable_monitoring = false    # default. true: Azure Managed Grafana + managed Prometheus (billed per instance); Grafana
+#                              # also reads the logs. See "Central logging" in nonLocal/terraform/README.md.
+# grafana_location  = "francecentral"           # default; Grafana is not offered in every region
+
+# ------------------------------------------------------------------------------------------------ Size (cost)
+# The defaults are the cheapest that work for testing. See "Keeping costs low" in nonLocal/terraform/README.md.
+# postgres_sku             = "B_Standard_B1ms"  # default; "B_Standard_B2s" allows far more connections, costs about 4 times as much
+# postgres_max_pool_size   = 5                  # default; raise it together with postgres_sku
+# node_vm_size             = "Standard_B2ms"    # default (8 GB); "Standard_B2s" (4 GB) is half the price but tight

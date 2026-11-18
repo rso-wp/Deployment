@@ -39,3 +39,11 @@ output "argocd" {
     "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}'   # base64 encoded password",
   ]) : "Argo CD is off: deploy_repo_url is empty."
 }
+
+output "logs" {
+  description = "Where the central logs are (empty when enable_logging is false)."
+  value = var.enable_logging ? join("\n", [
+    "Azure portal -> resource group ${azurerm_resource_group.rso.name} -> ${azurerm_log_analytics_workspace.logs[0].name} -> Logs, or ${azurerm_application_insights.logs[0].name} -> Logs",
+    "AppTraces | where AppRoleName == \"user-service\" | order by TimeGenerated desc",
+  ]) : "Central logging is off (enable_logging = false)."
+}

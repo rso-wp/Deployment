@@ -11,6 +11,11 @@ global:
     # Pod annotations prometheus.io/* on the platform services (/metrics, OpenTelemetry Prometheus exporter). Azure Managed
     # Prometheus picks them up (terraform sets podannotationnamespaceregex); turn off if nothing scrapes.
     scrape: true
+  logging:
+    # Name of a Secret with the key APPLICATIONINSIGHTS_CONNECTION_STRING. Set: the three services also send their logs to
+    # Application Insights (a Log Analytics workspace, read in Grafana); terraform creates the Secret (enable_logging).
+    # Empty: the logs only go to the console (kubectl logs).
+    existingSecret: ""
 
 # NATS with JetStream (not part of this chart), used by all three services: users.events.* (UserService -> PaymentService,
 # ProvisioningService) and payments.events.* (PaymentService -> ProvisioningService). Provisioning uses storage queues.

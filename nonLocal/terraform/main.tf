@@ -234,7 +234,10 @@ resource "azurerm_function_app_flex_consumption" "provision" {
     type = "SystemAssigned"
   }
 
-  site_config {}
+  site_config {
+    # The Functions host sends the function's logs (and its own) to Application Insights.
+    application_insights_connection_string = var.enable_logging ? azurerm_application_insights.logs[0].connection_string : null
+  }
 
   app_settings = {
     AzureWebJobsStorage = azurerm_storage_account.st.primary_connection_string
@@ -437,6 +440,7 @@ locals {
     global = {
       imageRegistry    = var.image_registry
       migrateOnStartup = true
+      logging          = { existingSecret = var.enable_logging ? kubernetes_secret_v1.logging[0].metadata[0].name : "" }
     }
     nats = { url = "nats://nats.messaging:4222" }
     auth = { signingPublicKey = tls_private_key.signing.public_key_pem }

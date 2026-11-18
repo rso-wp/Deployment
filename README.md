@@ -42,6 +42,12 @@ Follow [nonLocal/terraform/README.md](nonLocal/terraform/README.md): images, `te
 first run. The images are published by the **Publish image** workflow of each service repository when you push a tag like
 `v1.2.3` (`armodilo/<image>:v1.2.3` on Docker Hub).
 
+## Central logging
+
+The services and the function send their logs to Application Insights (Log Analytics), where you search them in the Azure portal
+or read them in Grafana. On by default, with a daily size cap. See "Central logging" in
+[nonLocal/terraform/README.md](nonLocal/terraform/README.md). Only service versions released after this change log there.
+
 ## Argo CD: new tags deploy themselves
 
 Optional, off by default. With it on, tagging a service is the whole release:

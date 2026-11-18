@@ -201,3 +201,39 @@ az mysql flexible-server stop -g rso-rg -n <mysql name>
 Start them in this order, databases first: `az postgres flexible-server start ...`, `az mysql flexible-server start ...`,
 then `az aks start ...`. Azure starts a stopped database server by itself after 7 days. `terraform apply` needs the cluster
 running.
+
+## Central logging
+
+UserService, PaymentService, ProvisioningService and ProvisionFunction send their logs to **Application Insights**, which
+stores them in a **Log Analytics workspace** (`enable_logging`, on by default). Grafana only displays logs, it cannot store
+them; Azure Managed Grafana reads this workspace with its built-in Azure Monitor data source.
+
+- **Services.** The C# services export everything written through `ILogger` with an OpenTelemetry exporter, switched on by
+  the `APPLICATIONINSIGHTS_CONNECTION_STRING` setting. Terraform puts it in a Secret (`logging`) and the chart gives it to the
+  three pods (`global.logging.existingSecret`). Without the setting (local runs) nothing leaves the process. The console output
+  stays, so `kubectl logs` still works.
+- **Function.** The Function App gets the same connection string, and the Functions host sends its logs (and the worker's)
+  to Application Insights, no code change.
+- **Cost.** The first 5 GB a month are free. `log_daily_cap_gb` (default 0.15, about 4.5 GB a month) makes the workspace stop
+  taking in data when it is reached, until the next day; retention is 30 days (`log_retention_days`).
+- **Only new versions log.** The services have to be released again (a new `vX.Y.Z` tag in each repository) before they
+  export anything; Terraform and the chart only prepare the setting.
+
+### Read the logs
+
+In the Azure portal: the Log Analytics workspace (`terraform output logs` names it) or the Application Insights resource, then
+**Logs**. Useful queries (the "role name" is the service):
+
+```kusto
+AppTraces | where AppRoleName == "user-service" | order by TimeGenerated desc
+AppTraces | where SeverityLevel >= 3 | order by TimeGenerated desc          // warnings and errors, all services
+AppTraces | where Message contains "ProvisionId" | order by TimeGenerated desc
+AppExceptions | order by TimeGenerated desc
+```
+
+### Read them in Grafana
+
+Grafana is off by default (it is billed per instance). Set `enable_monitoring = true` and run `terraform apply`; Terraform also
+gives Grafana's identity the **Log Analytics Reader** role on the workspace. In Grafana (`terraform output grafana_url`):
+**Explore** -> data source **Azure Monitor** -> service **Logs** -> pick the workspace -> paste a query like the ones above. A
+dashboard panel with a table or "Logs" visualization uses the same query. Metrics are in the Prometheus data source.

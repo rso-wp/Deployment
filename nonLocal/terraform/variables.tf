@@ -152,3 +152,23 @@ variable "image_version_constraint" {
   type        = string
   default     = ">=0.0.0"
 }
+
+# ------------------------------------------------------------------------------------------------ Central logging (logging.tf)
+
+variable "enable_logging" {
+  description = "Send the logs of the three services and of ProvisionFunction to Application Insights (a Log Analytics workspace), where you can search them and, with enable_monitoring, read them in Grafana. The first 5 GB a month are free; log_daily_cap_gb keeps it below that."
+  type        = bool
+  default     = true
+}
+
+variable "log_daily_cap_gb" {
+  description = "Most data the Log Analytics workspace takes in per day. When it is reached, new logs are dropped until the next day (a safety net for the budget): 0.15 GB a day is about 4.5 GB a month."
+  type        = number
+  default     = 0.15
+}
+
+variable "log_retention_days" {
+  description = "How long logs are kept (30 days is the smallest value and has no extra charge)."
+  type        = number
+  default     = 30
+}

@@ -76,6 +76,13 @@ spec:
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
+            {{- with .root.Values.global.logging.existingSecret }}
+            - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: APPLICATIONINSIGHTS_CONNECTION_STRING
+            {{- end }}
             {{- with .env }}
             {{- . | nindent 12 }}
             {{- end }}
